@@ -1,0 +1,2 @@
+# fundamentalAnalysisBot
+Fundamental Analysis Bot
