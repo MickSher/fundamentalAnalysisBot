@@ -1,78 +1,83 @@
-# main.py
-
 import time
 
 # --- Import Custom Engines ---
-# These assume you have defined these functions in their respective files
-from ingestion_engine import scrape_recent_news, get_fundamental_data
-from nlp_engine import analyze_sentiment
-from technical_engine import get_technical_data
+from ingestion_engine import get_cik_from_ticker, get_latest_filing_url, extract_text_from_filing
+from nlp_engine import analyze_sentiment_with_gemini
+from technical_engine import get_hard_metrics
 
 def decision_engine(ticker):
-    """
-    The core logic orchestrator. 
-    Calls external modules to gather data, weighs parameters, and outputs a signal.
-    """
     print(f"\n--- Initiating Autonomous Analysis for {ticker} ---")
     
-    # 1. Gather Fundamental & Qualitative Data (Ingestion Engine)
-    print(f"Gathering fundamental metrics and recent news...")
-    fundamentals = get_fundamental_data(ticker)
-    news_headlines = scrape_recent_news(ticker)
-    
-    # 2. Analyze Qualitative Data (NLP Engine)
-    print(f"Running NLP sentiment analysis on recent news...")
-    sentiment_score = analyze_sentiment(news_headlines)
-    print(f" -> Sentiment Score: {sentiment_score:.2f}")
-    
-    # 3. Gather Technical Confirmation (Technical Engine)
-    print(f"Checking technical trend indicators...")
-    current_price, sma_50 = get_technical_data(ticker)
-    
     # ==========================================
-    # DECISION LOGIC & PARAMETERS
+    # 1. INGESTION ENGINE (SEC Data)
     # ==========================================
-    
-    # Parameter A: Fundamental Rules
-    pe = fundamentals.get('forwardPE')
-    margin = fundamentals.get('profitMargins')
-    
-    fundamentally_sound = False
-    if pe is not None and margin is not None:
-        if pe < 25 and margin > 0.10: # P/E under 25, Profit Margin over 10%
-            fundamentally_sound = True
+    print(f"[{ticker}] Fetching SEC 10-K Data...")
+    try:
+        cik = get_cik_from_ticker(ticker)
+        filing_url = get_latest_filing_url(cik, "10-K")
+        if not filing_url:
+            return "ERROR: Could not locate 10-K filing."
+        
+        full_text = extract_text_from_filing(filing_url)
+        # Truncate text to fit within standard API limits 
+        # (Increase this if using a paid tier)
+        truncated_text = full_text[:60000] 
+    except Exception as e:
+        return f"ERROR in Data Ingestion: {e}"
 
-    # Parameter B: AI Sentiment Rules
-    sentiment_positive = sentiment_score > 0.2 
-    
-    # Parameter C: Technical Rules
-    technical_uptrend = False
-    if current_price is not None and sma_50 is not None:
-        technical_uptrend = current_price > sma_50
+    # ==========================================
+    # 2. NLP ENGINE (Gemini Sentiment)
+    # ==========================================
+    print(f"[{ticker}] Running Gemini AI Sentiment Analysis on SEC Text...")
+    ai_analysis = analyze_sentiment_with_gemini(truncated_text, ticker)
+    print(f"   -> AI Says: {ai_analysis.get('sentiment', 'ERROR')} (Confidence: {ai_analysis.get('confidence_score', 0)})")
+    print(f"   -> Reasoning: {ai_analysis.get('reasoning', 'No reasoning provided.')}")
     
     # ==========================================
-    # FINAL SIGNAL GENERATION
+    # 3. TECHNICAL ENGINE (yfinance Math)
     # ==========================================
-    print(f"\nWeighing parameters for {ticker}...")
+    print(f"[{ticker}] Fetching Technicals & Valuation Metrics...")
+    metrics = get_hard_metrics(ticker)
+    time.sleep(1) # Polite delay for Yahoo APIs
     
-    if fundamentally_sound and sentiment_positive and technical_uptrend:
-        return "STRONG BUY - Fundamentals, sentiment, and trend align."
+    # ==========================================
+    # 4. DECISION LOGIC & PARAMETERS
+    # ==========================================
+    print(f"[{ticker}] Weighing Parameters...")
     
-    elif not fundamentally_sound and sentiment_score < -0.2:
-        return "SELL / AVOID - Poor fundamentals and negative sentiment."
+    pe = metrics.get('forwardPE')
+    margin = metrics.get('profitMargins')
+    price = metrics.get('current_price')
+    sma = metrics.get('sma_50')
     
+    # Check A: Fundamental Valuation
+    math_is_good = False
+    if pe and margin:
+        if pe < 30 and margin > 0.05:
+            math_is_good = True
+            
+    # Check B: Technical Trend
+    trend_is_good = False
+    if price and sma:
+        if price > sma:
+            trend_is_good = True
+            
+    # Check C: NLP Sentiment
+    sentiment = ai_analysis.get('sentiment')
+    
+    # Final Output Logic
+    if sentiment == "POSITIVE" and math_is_good and trend_is_good:
+        return "STRONG BUY - SEC text sentiment, fundamental valuation, and technical trend align."
+    elif sentiment == "NEGATIVE" or not math_is_good:
+        return "SELL / AVOID - High risk detected in SEC filings or poor valuation."
     else:
-        return "HOLD - Mixed signals detected. Awaiting better setup."
+        return "HOLD - Mixed signals. Wait for a better setup."
 
 # --- Execute the System ---
 if __name__ == "__main__":
     target_stock = "AAPL"
     
-    try:
-        final_signal = decision_engine(target_stock)
-        print(f"\n=====================================")
-        print(f"FINAL DECISION FOR {target_stock}: \n{final_signal}")
-        print(f"=====================================")
-        
-    except Exception as e:
-        print(f"System Failure: {e}")
+    final_signal = decision_engine(target_stock)
+    print(f"\n=====================================")
+    print(f"FINAL DECISION FOR {target_stock}: \n{final_signal}")
+    print(f"=====================================")
